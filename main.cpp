@@ -1,7 +1,7 @@
-#include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <iostream>
 #include <vector>
+#include <functional>
 
 namespace py = pybind11;
 using namespace std;
@@ -36,24 +36,34 @@ public:
         sets.resize(numSets, CacheSet(associativity));
     }
 
-    bool read(int address, int time);
-    bool write(int address, int time);
+    bool read(int address, int time, std::function<void(std::string)> callback);
+    bool write(int address, int time, std::function<void(std::string)> callback);
     void replaceFIFO(int index, int tag);
     void replaceLRU(int index, int tag, int time);
     void replaceLFU(int index, int tag);
 };
 
 class MultiLevelCache {
-public:
-    Cache L1, L2, L3;
-
-    MultiLevelCache()
-        : L1(64, 4, 64),
-          L2(256, 8, 64),
-          L3(1024, 16, 64) {}
-
-    bool accessMemory(int address, int time);
-};
+    public:
+        int total_hits = 0;  // Track total cache hits
+        int total_misses = 0; // Track total cache misses
+        Cache L1, L2, L3;
+    
+        MultiLevelCache()
+            : L1(64, 4, 64),
+              L2(256, 8, 64),
+              L3(1024, 16, 64) {}
+    
+        bool accessMemory(int address, int time, std::function<void(std::string)> callback);
+    
+        int getTotalHits() {
+            return total_hits;  // Return total hits count
+        }
+    
+        int getTotalMisses() {
+            return total_misses;  // Return total misses count
+        }
+    };
 
 int getIndex(int address, int blockSize, int numSets) {
     return (address / blockSize) % numSets;
@@ -63,13 +73,14 @@ int getTag(int address, int blockSize, int numSets) {
     return address / (blockSize * numSets);
 }
 
-bool Cache::read(int address, int time) {
+bool Cache::read(int address, int time, std::function<void(std::string)> callback) {
     int index = getIndex(address, blockSize, numSets);
     int tag = getTag(address, blockSize, numSets);
 
     for (CacheBlock &block : sets[index].blocks) {
         if (block.valid && block.tag == tag) {
-            cout << "HIT ✅ in Cache at index " << index << "\n";
+            std::string msg = "HIT ✅ in Cache at index " + std::to_string(index) + "\n";
+            callback(msg);  // Pass message back to Python
             block.lastUsedTime = time;
             block.accessCount++;
             return true;
@@ -77,16 +88,19 @@ bool Cache::read(int address, int time) {
     }
 
     replaceLRU(index, tag, time);
+    std::string msg = "MISS ❌ in Cache at index " + std::to_string(index) + "\n";
+    callback(msg);  // Pass message back to Python
     return false;
 }
 
-bool Cache::write(int address, int time) {
+bool Cache::write(int address, int time, std::function<void(std::string)> callback) {
     int index = getIndex(address, blockSize, numSets);
     int tag = getTag(address, blockSize, numSets);
 
     for (CacheBlock &block : sets[index].blocks) {
         if (block.valid && block.tag == tag) {
-            cout << "HIT ✅ Writing to Cache at index " << index << "\n";
+            std::string msg = "HIT ✅ Writing to Cache at index " + std::to_string(index) + "\n";
+            callback(msg);  // Pass message back to Python
             block.lastUsedTime = time;
             block.accessCount++;
             block.dirty = true;
@@ -95,6 +109,8 @@ bool Cache::write(int address, int time) {
     }
 
     replaceLRU(index, tag, time);
+    std::string msg = "MISS ❌ Writing to Cache at index " + std::to_string(index) + "\n";
+    callback(msg);  // Pass message back to Python
     return false;
 }
 
@@ -142,31 +158,69 @@ void Cache::replaceLFU(int index, int tag) {
     sets[index].blocks[lfuIndex] = CacheBlock(tag, true, false, 1, 0);
 }
 
-bool MultiLevelCache::accessMemory(int address, int time) {
-    if (L1.read(address, time)) return true;
-    if (L2.read(address, time)) {
-        cout << "Moving block from L2 → L1\n";
-        L1.replaceLRU(getIndex(address, L1.blockSize, L1.numSets), getTag(address, L1.blockSize, L1.numSets), time);
-        return true;
-    }
-    if (L3.read(address, time)) {
-        cout << "Moving block from L3 → L2 → L1\n";
-        L2.replaceLRU(getIndex(address, L2.blockSize, L2.numSets), getTag(address, L2.blockSize, L2.numSets), time);
-        L1.replaceLRU(getIndex(address, L1.blockSize, L1.numSets), getTag(address, L1.blockSize, L1.numSets), time);
-        return true;
-    }
+bool MultiLevelCache::accessMemory(int address, int time, std::function<void(std::string)> callback) {
+    bool result = L1.read(address, time, [&](const std::string& msg) {
+        if (msg.find("HIT") != std::string::npos) {
+            total_hits++;  // Increment total hit count
+        }
+        if (msg.find("MISS") != std::string::npos) {
+            total_misses++;  // Increment total miss count
+        }
+        callback("L1 Cache: " + msg);
+    });
+    if (result) return true;
 
-    cout << "MISS ❌ Loading from RAM to L3 → L2 → L1\n";
-    L3.replaceLRU(getIndex(address, L3.blockSize, L3.numSets), getTag(address, L3.blockSize, L3.numSets), time);
-    L2.replaceLRU(getIndex(address, L2.blockSize, L2.numSets), getTag(address, L2.blockSize, L2.numSets), time);
-    L1.replaceLRU(getIndex(address, L1.blockSize, L1.numSets), getTag(address, L1.blockSize, L1.numSets), time);
+    result = L2.read(address, time, [&](const std::string& msg) {
+        if (msg.find("HIT") != std::string::npos) {
+            total_hits++;  // Increment total hit count
+        }
+        if (msg.find("MISS") != std::string::npos) {
+            total_misses++;  // Increment total miss count
+        }
+        callback("L2 Cache: " + msg);
+    });
+    if (result) return true;
 
-    return false;
+    result = L3.read(address, time, [&](const std::string& msg) {
+        if (msg.find("HIT") != std::string::npos) {
+            total_hits++;  // Increment total hit count
+        }
+        if (msg.find("MISS") != std::string::npos) {
+            total_misses++;  // Increment total miss count
+        }
+        callback("L3 Cache: " + msg);
+    });
+    return result;
+
 }
 
 // ⬇ pybind11 bindings
 PYBIND11_MODULE(mylib, m) {
+    py::class_<CacheBlock>(m, "CacheBlock")
+        .def(py::init<>())
+        .def_readwrite("tag", &CacheBlock::tag)
+        .def_readwrite("valid", &CacheBlock::valid)
+        .def_readwrite("dirty", &CacheBlock::dirty)
+        .def_readwrite("accessCount", &CacheBlock::accessCount)
+        .def_readwrite("lastUsedTime", &CacheBlock::lastUsedTime);
+
+    py::class_<CacheSet>(m, "CacheSet")
+        .def(py::init<int>())
+        .def_readwrite("blocks", &CacheSet::blocks);
+
+    py::class_<Cache>(m, "Cache")
+        .def(py::init<int, int, int>())
+        .def("read", &Cache::read)
+        .def("write", &Cache::write)
+        .def("replaceFIFO", &Cache::replaceFIFO)
+        .def("replaceLRU", &Cache::replaceLRU)
+        .def("replaceLFU", &Cache::replaceLFU)
+        .def_readwrite("sets", &Cache::sets);
+
     py::class_<MultiLevelCache>(m, "MultiLevelCache")
         .def(py::init<>())
-        .def("accessMemory", &MultiLevelCache::accessMemory, "Access memory at address and time");
+        .def("accessMemory", &MultiLevelCache::accessMemory)
+        .def("getTotalHits", &MultiLevelCache::getTotalHits)
+        .def("getTotalMisses", &MultiLevelCache::getTotalMisses)
+        .def("accessMemory", [](MultiLevelCache &self, int address, int time, py::function py_callback) { return self.accessMemory(address, time, [py_callback](const std::string& msg) { py_callback(msg); }); }, "Access memory with logging callback");
 }
