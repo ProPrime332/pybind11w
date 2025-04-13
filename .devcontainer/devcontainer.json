@@ -1,1 +1,11 @@
-.
+{
+  "name": "pybind11-env",
+  "image": "mcr.microsoft.com/devcontainers/python:3.11",
+  "features": {
+    "ghcr.io/devcontainers/features/cmake:1": {},
+    "ghcr.io/devcontainers/features/clangd:1": {},
+    "ghcr.io/devcontainers/features/gcc:1": {},
+    "ghcr.io/devcontainers/features/python-tools:1": {}
+  },
+  "postCreateCommand": "pip install pybind11"
+}
