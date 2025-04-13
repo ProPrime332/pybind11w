@@ -1,117 +1,194 @@
 import tkinter as tk
-from tkinter import scrolledtext
-import mylib  # This is your pybind11 C++ module
-import random
-import matplotlib.pyplot as plt
+from tkinter import ttk, scrolledtext
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import matplotlib.pyplot as plt
+import random
+import mylib
 
-class CacheSimulatorApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Cache Simulator")
-
-        # Set up the Cache Simulator
+class CacheSimulatorGUI(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("CPU Cache Simulator")
+        self.geometry("1200x700")
+        
+        # Initialize C++ MultiLevelCache
         self.cache = mylib.MultiLevelCache()
+        self.time_counter = 0
+        
+        # Initialize data containers
+        self.time_points = []
+        self.hit_ratios_read = []
+        self.hit_ratios_write = []
+        self.log_messages = ["System initialized.", "Ready for operations."]
+        
+        # Initialize UI components
+        self.setup_gui()
+        
+    def setup_gui(self):
+        # Top Dropdown Menu
+        self.menu_frame = tk.Frame(self)
+        self.menu_frame.pack(fill=tk.X, pady=10)
 
-        # Set up the UI elements
-        self.create_widgets()
+        self.selected_option = tk.StringVar(value="Simple Read/Write")
+        self.dropdown = ttk.Combobox(self.menu_frame, textvariable=self.selected_option, 
+                                   values=["Simple Read/Write", "Memory Tracking"], state="readonly")
+        self.dropdown.pack(side=tk.RIGHT, padx=20)
+        self.dropdown.bind("<<ComboboxSelected>>", lambda event: self.switch_page(self.selected_option.get()))
 
-    def create_widgets(self):
-        # Create a frame for input controls
-        self.frame = tk.Frame(self.root)
-        self.frame.pack(padx=10, pady=10)
+        # Main Content Area
+        self.main_frame = tk.Frame(self)
+        self.main_frame.pack(expand=True, fill='both')
 
-        # Address input field
-        self.label_address = tk.Label(self.frame, text="Address:")
-        self.label_address.grid(row=0, column=0, padx=5, pady=5)
+        # Start with Simple Read/Write page
+        self.switch_page("Simple Read/Write")
 
-        self.entry_address = tk.Entry(self.frame, width=20)
-        self.entry_address.grid(row=0, column=1, padx=5, pady=5)
+    def switch_page(self, page_name):
+        for widget in self.main_frame.winfo_children():
+            widget.destroy()
+        if page_name == "Simple Read/Write":
+            self.simple_read_write_page()
+        elif page_name == "Memory Tracking":
+            self.memory_tracking_page()
 
-        # Time input field
-        self.label_time = tk.Label(self.frame, text="Time:")
-        self.label_time.grid(row=1, column=0, padx=5, pady=5)
+    def simple_read_write_page(self):
+        frame = tk.Frame(self.main_frame)
+        frame.pack(expand=True, fill='both', padx=20, pady=20)
 
-        self.entry_time = tk.Entry(self.frame, width=20)
-        self.entry_time.grid(row=1, column=1, padx=5, pady=5)
+        # Left frame for input and log
+        left_frame = tk.Frame(frame)
+        left_frame.pack(side="left", fill="both", expand=True)
 
-        # Access button
-        self.button_access = tk.Button(self.frame, text="Access Memory", command=self.access_memory)
-        self.button_access.grid(row=2, column=0, columnspan=2, pady=10)
+        # Right frame for graph
+        right_frame = tk.Frame(frame, width=300, height=300, bg="white", relief="solid", bd=2)
+        right_frame.pack(side="left", padx=30, pady=20)
+        right_frame.pack_propagate(False)
 
-        # Cache log area
-        self.label_log = tk.Label(self.root, text="Cache Log:")
-        self.label_log.pack(pady=5)
+        # Initialize matplotlib figure
+        self.fig, self.ax = plt.subplots(figsize=(3.5, 3.5))
+        self.canvas = FigureCanvasTkAgg(self.fig, master=right_frame)
+        self.canvas.get_tk_widget().pack(fill="both", expand=True)
+        self.update_graph()
 
-        self.cache_log = scrolledtext.ScrolledText(self.root, width=50, height=15, wrap=tk.WORD)
-        self.cache_log.pack(padx=10, pady=10)
+        # Input components
+        self.write_address_entry = tk.Entry(left_frame, width=12, font=("Arial", 13))
+        self.write_value_entry = tk.Entry(left_frame, width=12, font=("Arial", 13))
+        self.read_address_entry = tk.Entry(left_frame, width=12, font=("Arial", 13))
+        self.log_output = scrolledtext.ScrolledText(left_frame, width=70, height=18, font=("Arial", 12))
 
-        # Visualization frame
-        self.visualization_frame = tk.Frame(self.root)
-        self.visualization_frame.pack(padx=10, pady=10)
+        # Build left frame layout
+        self.build_input_layout(left_frame)
+        
+    def build_input_layout(self, parent):
+        label_font = ("Arial", 14, "bold")
+        entry_font = ("Arial", 13)
+        button_font = ("Arial", 12)
 
-        # Button for random address and time generation
-        self.button_generate = tk.Button(self.visualization_frame, text="Generate Random Access", command=self.generate_random_access)
-        self.button_generate.pack(side=tk.LEFT, padx=5, pady=5)
+        # Write Section
+        tk.Label(parent, text="Write to Memory", font=label_font).grid(row=0, column=0, columnspan=3, pady=10, sticky="w")
+        tk.Label(parent, text="Address:", font=entry_font).grid(row=1, column=0, padx=5, sticky="w")
+        self.write_address_entry.grid(row=1, column=1, padx=5, sticky="w")
+        tk.Label(parent, text="Value:", font=entry_font).grid(row=1, column=2, padx=5, sticky="w")
+        self.write_value_entry.grid(row=1, column=3, padx=5, sticky="w")
+        self.write_value_entry.bind("<Return>", lambda event: self.write_memory())
+        
+        tk.Button(parent, text="Write", command=self.write_memory, font=button_font, width=10
+                 ).grid(row=1, column=4, padx=10, sticky="w")
 
-        # Plot for visualizing cache hits vs misses
-        self.button_plot = tk.Button(self.visualization_frame, text="Plot Cache Hits vs Misses", command=self.plot_cache_hits)
-        self.button_plot.pack(side=tk.LEFT, padx=5, pady=5)
+        # Read Section
+        tk.Label(parent, text="Read from Memory", font=label_font).grid(row=2, column=0, columnspan=3, pady=10, sticky="w")
+        tk.Label(parent, text="Address:", font=entry_font).grid(row=3, column=0, padx=5, sticky="w")
+        self.read_address_entry.grid(row=3, column=1, padx=5, sticky="w")
+        self.read_address_entry.bind("<Return>", lambda event: self.read_memory())
+        
+        tk.Button(parent, text="Read", command=self.read_memory, font=button_font, width=10
+                 ).grid(row=3, column=2, padx=10, sticky="w")
 
-    def access_memory(self):
-        # Get address and time input values
-        try:
-            address = int(self.entry_address.get(), 16)  # Address in hexadecimal format
-            time = int(self.entry_time.get())
-        except ValueError:
-            self.cache_log.insert(tk.END, "Invalid input! Please enter valid Address and Time.\n")
-            return
+        # Log Section
+        tk.Button(parent, text="Refresh", command=self.clear_logs, bg="red", fg="white",
+                 font=button_font, width=12).grid(row=4, column=0, columnspan=3, pady=10, sticky="w")
+        self.log_output.grid(row=5, column=0, columnspan=5, pady=20, sticky="w")
+        self.update_log_output()
 
-        # Clear the previous log
-        self.cache_log.delete(1.0, tk.END)
+    def update_graph(self):
+        self.ax.clear()
+        self.ax.set_title("Cache Access Time vs Hit Ratio", fontsize=14)
+        self.ax.set_xlabel("Time / Operations", fontsize=12)
+        self.ax.set_ylabel("Hit Ratio", fontsize=12)
+        
+        if self.time_points:
+            self.ax.plot(self.time_points, self.hit_ratios_read, color='blue', label='Read', marker='o')
+            self.ax.plot(self.time_points, self.hit_ratios_write, color='green', label='Write', marker='x')
+            self.ax.legend()
+        
+        self.canvas.draw()
 
-        # Callback function to log messages
-        def log_message(message):
-            self.cache_log.insert(tk.END, message)
-            self.cache_log.yview(tk.END)  # Scroll to the bottom
+    def clear_logs(self):
+        self.log_output.delete("1.0", tk.END)
+        self.write_address_entry.delete(0, tk.END)
+        self.write_value_entry.delete(0, tk.END)
+        self.read_address_entry.delete(0, tk.END)
 
-        # Access memory via the MultiLevelCache object (this is where the C++ logic is invoked)
-        self.cache.accessMemory(address, time, log_message)
+    def update_log_output(self):
+        self.log_output.delete("1.0", tk.END)
+        for msg in self.log_messages:
+            self.log_output.insert(tk.END, f"{msg}\n")
+        self.log_output.see(tk.END)
 
-    def generate_random_access(self):
-        """Generate a random address and time for cache access and show the result."""
-        address = random.randint(0, 0xFFFFF)  # Generate random address in hex
-        time = random.randint(0, 100)  # Random time between 0 and 100
-        self.entry_address.delete(0, tk.END)
-        self.entry_address.insert(tk.END, hex(address))  # Display address in hexadecimal
-        self.entry_time.delete(0, tk.END)
-        self.entry_time.insert(tk.END, time)  # Display random time
+    def write_memory(self):
+        address = self.write_address_entry.get()
+        value = self.write_value_entry.get()
+        if address and value:
+            try:
+                self.time_counter += 1
+                # Access through accessMemory instead of direct L1 access
+                result = self.cache.accessMemory(int(address), self.time_counter,
+                            lambda msg: self.log_messages.append(f"WRITE: {msg}"))
+            
+                # Update graph with real hit ratio
+                total_accesses = self.cache.getTotalHits() + self.cache.getTotalMisses()
+                hit_ratio = self.cache.getTotalHits() / total_accesses if total_accesses > 0 else 0
+            
+                self.time_points.append(self.time_counter)
+                self.hit_ratios_write.append(hit_ratio)
+                self.update_graph()
+            
+            except ValueError:
+                self.log_messages.append("Invalid address/value format")
+        else:
+            self.log_messages.append("Error: Address and value required")
+        self.update_log_output()
+        self.write_address_entry.delete(0, tk.END)
+        self.write_value_entry.delete(0, tk.END)
 
-        # Automatically access memory with the generated values
-        self.access_memory()
+    def read_memory(self):
+        address = self.read_address_entry.get()
+        if address:
+            try:
+                self.time_counter += 1
+                result = self.cache.accessMemory(int(address), self.time_counter,
+                           lambda msg: self.log_messages.append(msg))
+                
+                total_accesses = self.cache.getTotalHits() + self.cache.getTotalMisses()
+                hit_ratio = self.cache.getTotalHits() / total_accesses if total_accesses > 0 else 0
+                
+                self.time_points.append(self.time_counter)
+                self.hit_ratios_read.append(hit_ratio)
+                self.update_graph()
+                
+            except ValueError:
+                self.log_messages.append("Invalid address format")
+        else:
+            self.log_messages.append("Error: Please enter a memory address")
+        self.update_log_output()
+        self.read_address_entry.delete(0, tk.END)
 
-    def plot_cache_hits(self):
-        """Plot total cache hits vs misses using matplotlib."""
-        # Use the total hit/miss data
-        total_hits = self.cache.getTotalHits()
-        total_misses = self.cache.getTotalMisses()
+    def memory_tracking_page(self):
+        frame = tk.Frame(self.main_frame)
+        frame.pack(expand=True, pady=20, padx=10)
+        
+        # Memory Tracking page implementation
+        # (Add your memory tracking components here following the same pattern)
 
-        # Plot the data
-        fig, ax = plt.subplots()
-        ax.bar(['Cache Hits', 'Cache Misses'], [total_hits, total_misses], color=['green', 'red'])
-
-        ax.set_title("Total Cache Hits vs Misses")
-        ax.set_ylabel("Count")
-        ax.set_xlabel("Cache Activity")
-
-        # Embed the plot in the Tkinter window
-        canvas = FigureCanvasTkAgg(fig, master=self.visualization_frame)
-        canvas.draw()
-        canvas.get_tk_widget().pack()
-
-# Set up the main Tkinter window
-root = tk.Tk()
-app = CacheSimulatorApp(root)
-
-# Start the Tkinter main loop
-root.mainloop()
+if __name__ == "__main__":
+    app = CacheSimulatorGUI()
+    app.mainloop()

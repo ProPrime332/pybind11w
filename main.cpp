@@ -215,12 +215,19 @@ PYBIND11_MODULE(mylib, m) {
         .def("replaceFIFO", &Cache::replaceFIFO)
         .def("replaceLRU", &Cache::replaceLRU)
         .def("replaceLFU", &Cache::replaceLFU)
+        .def_readonly("blockSize", &Cache::blockSize)
+        .def_readonly("numSets", &Cache::numSets)
         .def_readwrite("sets", &Cache::sets);
 
     py::class_<MultiLevelCache>(m, "MultiLevelCache")
         .def(py::init<>())
+        .def_readonly("L1", &MultiLevelCache::L1)
+        .def_readonly("L2", &MultiLevelCache::L2)
+        .def_readonly("L3", &MultiLevelCache::L3)    
         .def("accessMemory", &MultiLevelCache::accessMemory)
         .def("getTotalHits", &MultiLevelCache::getTotalHits)
         .def("getTotalMisses", &MultiLevelCache::getTotalMisses)
         .def("accessMemory", [](MultiLevelCache &self, int address, int time, py::function py_callback) { return self.accessMemory(address, time, [py_callback](const std::string& msg) { py_callback(msg); }); }, "Access memory with logging callback");
+        m.def("getTag", &getTag, "Calculate tag");
+        m.def("getTag", &getIndex, "Calculate indx");
 }
