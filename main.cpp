@@ -50,11 +50,16 @@ class MultiLevelCache {
         Cache L1, L2, L3;
     
         MultiLevelCache()
-            : L1(64, 4, 64),
-              L2(256, 8, 64),
-              L3(1024, 16, 64) {}
+            : L1(4, 2, 64),
+              L2(8, 4, 64),
+              L3(16, 4, 64) {}
     
         bool accessMemory(int address, int time, std::function<void(std::string)> callback);
+        bool write_memory(int address, int time, std::function<void(std::string)> callback) {
+            bool hit = L1.write(address, time, callback);
+            if (!hit) hit = L2.write(address, time, callback);
+            if (!hit) hit = L3.write(address, time, callback);
+            return hit;
     
         int getTotalHits() {
             return total_hits;  // Return total hits count
@@ -198,6 +203,7 @@ bool MultiLevelCache::accessMemory(int address, int time, std::function<void(std
 PYBIND11_MODULE(mylib, m) {
     py::class_<CacheBlock>(m, "CacheBlock")
         .def(py::init<>())
+        .def(py::init<int, bool, bool, int, int>())
         .def_readwrite("tag", &CacheBlock::tag)
         .def_readwrite("valid", &CacheBlock::valid)
         .def_readwrite("dirty", &CacheBlock::dirty)
@@ -217,7 +223,10 @@ PYBIND11_MODULE(mylib, m) {
         .def("replaceLFU", &Cache::replaceLFU)
         .def_readonly("blockSize", &Cache::blockSize)
         .def_readonly("numSets", &Cache::numSets)
-        .def_readwrite("sets", &Cache::sets);
+        .def_readwrite("sets", &Cache::sets)
+        .def_property_readonly("num_sets", [](const Cache &c) { return c.numSets; })
+        .def_property_readonly("associativity", [](const Cache &c) { return c.associativity; })
+        .def_property_readonly("block_size", [](const Cache &c) { return c.blockSize; });
 
     py::class_<MultiLevelCache>(m, "MultiLevelCache")
         .def(py::init<>())
@@ -227,7 +236,8 @@ PYBIND11_MODULE(mylib, m) {
         .def("accessMemory", &MultiLevelCache::accessMemory)
         .def("getTotalHits", &MultiLevelCache::getTotalHits)
         .def("getTotalMisses", &MultiLevelCache::getTotalMisses)
-        .def("accessMemory", [](MultiLevelCache &self, int address, int time, py::function py_callback) { return self.accessMemory(address, time, [py_callback](const std::string& msg) { py_callback(msg); }); }, "Access memory with logging callback");
-        m.def("getTag", &getTag, "Calculate tag");
-        m.def("getTag", &getIndex, "Calculate indx");
+        .def("accessMemory", [](MultiLevelCache &self, int address, int time, py::function py_callback) { return self.accessMemory(address, time, [py_callback](const std::string& msg) { py_callback(msg); }); }, "Access memory with logging callback")
+        .def("write_memory", [](MultiLevelCache &self, int address, int time, py::function py_callback) { return self.write_memory(address, time, [py_callback](const std::string& msg) { py_callback(msg); }); }, "write memory with logging callback");
+        m.def("getIndex", &getIndex, "Calculate cache index from address", py::arg("address"), py::arg("block_size"), py::arg("num_sets"));
+        m.def("getTag", &getTag, "Calculate cache tag from address", py::arg("address"), py::arg("block_size"), py::arg("num_sets"));
 }
