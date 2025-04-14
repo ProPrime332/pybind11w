@@ -20,7 +20,11 @@ class CacheSimulatorGUI(tk.Tk):
         self.time_points = []
         self.hit_ratios_read = []
         self.hit_ratios_write = []
-        self.log_messages = []
+        self.search_counts = []
+        self.search_times = []
+        self.operation_counter = 0
+        self.graph_data = {"x": [], "y": [], "colors": []}
+
         
         # Setup GUI
         self.setup_gui()
@@ -31,11 +35,11 @@ class CacheSimulatorGUI(tk.Tk):
         self.menu_frame = tk.Frame(self)
         self.menu_frame.pack(fill=tk.X, pady=10)
         
-        self.selected_option = tk.StringVar(value="Simple Read/Write")
+        self.selected_option = tk.StringVar(value="Memory Tracking")
         self.dropdown = ttk.Combobox(
             self.menu_frame, 
             textvariable=self.selected_option,
-            values=["Simple Read/Write", "Memory Tracking"],
+            values=["Memory Tracking"],
             state="readonly"
         )
         self.dropdown.pack(side=tk.RIGHT, padx=20)
@@ -45,71 +49,14 @@ class CacheSimulatorGUI(tk.Tk):
         self.main_frame = tk.Frame(self)
         self.main_frame.pack(expand=True, fill='both')
         
-        self.switch_page("Simple Read/Write")
+        self.switch_page("Memory Tracking")
 
     def switch_page(self, page_name):
         # Clear current page
         for widget in self.main_frame.winfo_children():
             widget.destroy()
-        
-        self.current_page = page_name
-        if page_name == "Simple Read/Write":
-            self.simple_read_write_page()
-        elif page_name == "Memory Tracking":
+        if page_name == "Memory Tracking":
             self.memory_tracking_page()
-
-    def simple_read_write_page(self):
-        frame = tk.Frame(self.main_frame)
-        frame.pack(expand=True, fill='both', padx=20, pady=20)
-        
-        # Left panel
-        left_frame = tk.Frame(frame)
-        left_frame.pack(side="left", fill="both", expand=True)
-        
-        # Right panel with graph
-        right_frame = tk.Frame(frame, width=300, height=300, bg="white", relief="solid", bd=2)
-        right_frame.pack(side="left", padx=30, pady=20)
-        right_frame.pack_propagate(False)
-        
-        # Graph setup
-        self.fig, self.ax = plt.subplots(figsize=(3.5, 3.5))
-        self.canvas = FigureCanvasTkAgg(self.fig, master=right_frame)
-        self.canvas.get_tk_widget().pack(fill="both", expand=True)
-        self.update_graph()
-        
-        # Input components
-        self.build_input_layout(left_frame)
-
-    def build_input_layout(self, parent):
-        label_font = ("Arial", 14, "bold")
-        entry_font = ("Arial", 13)
-        button_font = ("Arial", 12)
-        
-        # Write section
-        tk.Label(parent, text="Write to Memory", font=label_font).grid(row=0, column=0, columnspan=3, pady=10, sticky="w")
-        tk.Label(parent, text="Address:", font=entry_font).grid(row=1, column=0, padx=5, sticky="w")
-        self.write_address_entry = tk.Entry(parent, width=12, font=entry_font)
-        self.write_address_entry.grid(row=1, column=1, padx=5, sticky="w")
-        tk.Label(parent, text="Value:", font=entry_font).grid(row=1, column=2, padx=5, sticky="w")
-        self.write_value_entry = tk.Entry(parent, width=12, font=entry_font)
-        self.write_value_entry.grid(row=1, column=3, padx=5, sticky="w")
-        self.write_value_entry.bind("<Return>", lambda e: self.write_memory())
-        tk.Button(parent, text="Write", command=self.write_memory, font=button_font, width=10).grid(row=1, column=4, padx=10, sticky="w")
-        
-        # Read section
-        tk.Label(parent, text="Read from Memory", font=label_font).grid(row=2, column=0, columnspan=3, pady=10, sticky="w")
-        tk.Label(parent, text="Address:", font=entry_font).grid(row=3, column=0, padx=5, sticky="w")
-        self.read_address_entry = tk.Entry(parent, width=12, font=entry_font)
-        self.read_address_entry.grid(row=3, column=1, padx=5, sticky="w")
-        self.read_address_entry.bind("<Return>", lambda e: self.read_memory())
-        tk.Button(parent, text="Read", command=self.read_memory, font=button_font, width=10).grid(row=3, column=2, padx=10, sticky="w")
-        
-        # Log section
-        tk.Button(parent, text="Refresh", command=self.clear_logs, bg="red", fg="white", 
-                 font=button_font, width=12).grid(row=4, column=0, columnspan=3, pady=10, sticky="w")
-        self.log_output = scrolledtext.ScrolledText(parent, width=70, height=18, font=("Arial", 12))
-        self.log_output.grid(row=5, column=0, columnspan=5, pady=20, sticky="w")
-        self.update_log_output()
 
     def memory_tracking_page(self):
         frame = tk.Frame(self.main_frame)
@@ -128,6 +75,14 @@ class CacheSimulatorGUI(tk.Tk):
         # Cache visualization
         self.create_cache_visualization(frame)
         self.refresh_cache_display()
+
+        self.graph_frame = tk.Frame(frame, bd=2, relief='ridge', bg="white")
+        self.graph_frame.pack(fill='both', expand=True, pady=10)
+
+        self.fig, self.ax = plt.subplots(figsize=(5, 3))
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.graph_frame)
+        self.canvas.get_tk_widget().pack(fill='both', expand=True)
+        self.update_graph()
 
     def create_cache_visualization(self, parent):
         # Clear existing entries
@@ -175,8 +130,7 @@ class CacheSimulatorGUI(tk.Tk):
                 # Write to memory (uses our camelCase alias)
                 result = self.cache.write_memory(
                     addr, 
-                    self.time_counter,
-                    lambda msg: self.log_messages.append(f"WRITE: {msg}")
+                    self.time_counter
                     )
                 
                 # Update metrics
@@ -189,10 +143,7 @@ class CacheSimulatorGUI(tk.Tk):
                 self.refresh_cache_display()
                 
             except ValueError:
-                self.log_messages.append("Invalid address/value")
-        else:
-            self.log_messages.append("Missing address/value")
-        self.update_log_output()
+                print("e")
         self.write_address_entry.delete(0, tk.END)
         self.write_value_entry.delete(0, tk.END)
 
@@ -202,8 +153,7 @@ class CacheSimulatorGUI(tk.Tk):
             try:
                 self.time_counter += 1
                 addr = int(address)
-                result = self.cache.accessMemory(addr, self.time_counter,
-                           lambda msg: self.log_messages.append(msg))
+                result = self.cache.accessMemory(addr, self.time_counter)
                 
                 # Update metrics
                 total = self.cache.getTotalHits() + self.cache.getTotalMisses()
@@ -215,16 +165,15 @@ class CacheSimulatorGUI(tk.Tk):
                 self.refresh_cache_display()
                 
             except ValueError:
-                self.log_messages.append("Invalid address")
-        else:
-            self.log_messages.append("Missing address")
-        self.update_log_output()
+                print("e")
         self.read_address_entry.delete(0, tk.END)
 
     # Animated cache search routines
     def start_cache_search(self):
         address = self.search_entry.get()
         if address:
+          
+
             self.animate_cache_search(address)
             self.search_entry.delete(0, tk.END)
 
@@ -232,15 +181,27 @@ class CacheSimulatorGUI(tk.Tk):
         try:
             addr = int(address)
             self.reset_cache_colors()
+            
+            # Reset graph data and counters for new search
+            self.graph_data["x"].clear()
+            self.graph_data["y"].clear()
+            self.graph_data["colors"].clear()
+            self.operation_counter = 0  # Reset operation counter for new search
+            self.search_counts.clear()
+            self.search_times.clear()
+            self.hit_ratios_read.clear()
+            self.hit_ratios_write.clear()
+            self.time_points.clear()
+            
             self.time_counter += 1
             self.search_level = 0
             self.levels = ["L1", "L2", "L3"]
             self.search_address = addr
             self.found = False
+            self.search_start_time = self.time_counter
             self.search_next_level()
         except ValueError:
-            self.log_messages.append(f"Invalid address: {address}")
-            self.update_log_output()
+            print("Invalid address format")
 
     def search_next_level(self):
         if self.search_level >= len(self.levels) or self.found:
@@ -255,7 +216,8 @@ class CacheSimulatorGUI(tk.Tk):
         
         # Highlight current set
         set_blocks = self.get_set_blocks(level, index, cache.associativity)
-        self.highlight_set(set_blocks, "#fff3cd")
+        self.highlight_set(set_blocks, "#fff3cd", level)
+        self.update_live_graph(level)
         
         # Check for hit
         hit_index = -1
@@ -263,6 +225,7 @@ class CacheSimulatorGUI(tk.Tk):
             if block.valid and block.tag == tag:
                 hit_index = i
                 break
+        self.operation_counter +=1
         
         self.after(800, lambda: self.process_hit_miss(level, index, hit_index, set_blocks))
 
@@ -274,19 +237,19 @@ class CacheSimulatorGUI(tk.Tk):
 
     def handle_hit(self, level, index, hit_index, set_blocks):
         set_blocks[hit_index].config(bg="#d4edda")
+        self.operation_counter += 1
+        self.update_live_graph(level)
         for i, block in enumerate(set_blocks):
             if i != hit_index:
                 block.config(bg="#f0f0f0")
-        self.log_messages.append(f"{level} HIT: Set {index} Block {hit_index}")
-        self.update_log_output()
         self.found = True
         self.after(1000, self.reset_cache_colors)
 
     def handle_miss(self, level, index, set_blocks):
         for block in set_blocks:
             block.config(bg="#f8d7da")
-        self.log_messages.append(f"{level} MISS: Set {index}")
-        self.update_log_output()
+        self.operation_counter += 1
+        self.update_live_graph(level)
         self.search_level += 1
         self.after(1000, self.continue_search)
 
@@ -295,9 +258,8 @@ class CacheSimulatorGUI(tk.Tk):
         self.search_next_level()
 
     def animate_ram_access(self):
+        self.update_live_graph("RAM")
         self.ram_frame.config(bg="#ffd700")
-        self.log_messages.append(f"RAM ACCESS: {self.search_address}")
-        self.update_log_output()
     
         # Update all cache levels in reverse order (from L3 up to L1)
         for level in reversed(self.levels):
@@ -323,21 +285,43 @@ class CacheSimulatorGUI(tk.Tk):
             set_blocks[lru_index].config(text=display_text, bg="#d4edda")
     
         # Reset colors after animations
+        search_time = self.time_counter - self.search_start_time
+        self.search_counts.append(len(self.search_counts) + 1)  # Incremental number of searches
+
+        self.search_times.append(search_time)
+        self.update_graph()
+
         self.after(1500, self.continue_ram_animation)
 
 
     def continue_ram_animation(self):
         self.ram_frame.config(bg="lightgray")
-        self.reset_cache_colors()
+        if self.graph_data["x"] and self.graph_data["y"]:
+            self.graph_data["x"].append(self.operation_counter + 1)
+            self.graph_data["y"].append(self.graph_data["y"][-1])  # Same Y value for flat line
+            self.graph_data["colors"].append("orange")  # End of search flat line
+
+            self.update_live_graph("RAM")
+            
+            self.reset_cache_colors()
 
     # Helper methods
     def get_set_blocks(self, level, index, associativity):
         start = index * associativity
         return self.cache_entries[level][start:start+associativity]
 
-    def highlight_set(self, blocks, color):
-        for block in blocks:
-            block.config(bg=color)
+    def highlight_set(self, blocks, color, level):
+        def highlight_block(i):
+            if i >= len(blocks):
+                return
+            blocks[i].config(bg=color)
+            self.operation_counter += 1
+            self.time_counter += 1
+            self.update_live_graph(level)
+            self.after(200, lambda: highlight_block(i + 1))  # Adjust speed here!
+
+        highlight_block(0)
+
 
     def reset_cache_colors(self):
         for level in self.cache_entries.values():
@@ -371,28 +355,44 @@ class CacheSimulatorGUI(tk.Tk):
 
     def update_graph(self):
         self.ax.clear()
-        self.ax.set_title("Hit Ratio Over Time")
-        self.ax.set_xlabel("Operations")
-        self.ax.set_ylabel("Hit Ratio")
+        self.ax.set_title("Cache Performance Over Time")
+        self.ax.set_xlabel("Number of Searches")
+        self.ax.set_ylabel("Time Taken (arbitrary units)")
+
+        if self.search_counts:
+            self.ax.plot(self.search_counts, self.search_times, label='Search Time', color='red', marker='o')
+
         if self.time_points:
-            self.ax.plot(self.time_points, self.hit_ratios_read, label='Reads', color='blue')
-            self.ax.plot(self.time_points, self.hit_ratios_write, label='Writes', color='green')
-            self.ax.legend()
+            self.ax.plot(self.time_points, self.hit_ratios_read, label='Reads (Hit Ratio)', color='blue', linestyle='--')
+            self.ax.plot(self.time_points, self.hit_ratios_write, label='Writes (Hit Ratio)', color='green', linestyle='--')
+
+        self.ax.legend()
         self.canvas.draw()
 
-    def update_log_output(self):
-        if self.log_output.winfo_exists():
-            self.log_output.delete("1.0", tk.END)
-            for msg in self.log_messages[-20:]:  # Show last 20 messages
-                self.log_output.insert(tk.END, msg + "\n")
-            self.log_output.see(tk.END)
+    def update_live_graph(self, level):
+        colors = {"L1": "red", "L2": "green", "L3": "blue", "RAM": "orange"}
+        color = colors.get(level, "black")
+        self.graph_data["x"].append(self.operation_counter)
+        self.graph_data["y"].append(self.time_counter)
+        self.graph_data["colors"].append(color)
 
-    def clear_logs(self):
-        self.log_messages.clear()
-        self.update_log_output()
-        self.write_address_entry.delete(0, tk.END)
-        self.write_value_entry.delete(0, tk.END)
-        self.read_address_entry.delete(0, tk.END)
+        self.ax.clear()
+        self.ax.set_title("Cache Performance Over Time")
+        self.ax.set_xlabel("Number of Operations")
+        self.ax.set_ylabel("Cumulative Time Units")
+
+        if self.graph_data["x"]:
+            # Draw lines by segments with their respective colors
+            for i in range(1, len(self.graph_data["x"])):
+                self.ax.plot(
+                    self.graph_data["x"][i-1:i+1],
+                    self.graph_data["y"][i-1:i+1],
+                    color=self.graph_data["colors"][i],
+                    linewidth=2
+                )
+
+        self.ax.legend(["L1 (Red)", "L2 (Green)", "L3 (Blue)", "RAM (Orange)"])
+        self.canvas.draw()
 
     def initialize_cache(self):
         """Initialize cache with unique tags by forcing block allocation in each level separately."""
