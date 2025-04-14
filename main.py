@@ -24,6 +24,7 @@ class CacheSimulatorGUI(tk.Tk):
         self.search_times = []
         self.operation_counter = 0
         self.graph_data = {"x": [], "y": [], "colors": []}
+        self.replacement_policy = tk.StringVar(value="LRU")
 
         
         # Setup GUI
@@ -48,6 +49,17 @@ class CacheSimulatorGUI(tk.Tk):
         # Main content area
         self.main_frame = tk.Frame(self)
         self.main_frame.pack(expand=True, fill='both')
+
+        policy_frame = tk.Frame(self.menu_frame)
+        policy_frame.pack(side=tk.LEFT, padx=10)
+        ttk.Label(policy_frame, text="Replacement Policy:").pack(side=tk.LEFT)
+        ttk.Combobox(
+            policy_frame,
+            textvariable=self.replacement_policy,
+            values=["LRU", "LFU", "FIFO"],
+            state="readonly",
+            width=8
+        ).pack(side=tk.LEFT)
         
         self.switch_page("Memory Tracking")
 
@@ -235,15 +247,39 @@ class CacheSimulatorGUI(tk.Tk):
         else:
             self.handle_miss(level, index, set_blocks)
 
+    def animate_block_transfer(self, from_block, to_block, text, callback=None):
+        original_color_from = from_block.cget("bg")
+        original_color_to = to_block.cget("bg")
+
+        from_block.config(bg="#cce5ff")  # Highlight source
+        to_block.config(bg="#cce5ff")    # Highlight destination
+
+        def transfer():
+            to_block.config(text=text, bg="#d4edda")
+            from_block.config(bg=original_color_from)
+            if callback:
+                self.after(600, callback)
+
+        self.after(600, transfer)
+
+    def extract_tag_from_text(self, text):
+        for line in text.split("\n"):
+            if line.startswith("Tag:"):
+                return int(line.split(":")[1].strip())
+        return -1
+
+
+    
     def handle_hit(self, level, index, hit_index, set_blocks):
         set_blocks[hit_index].config(bg="#d4edda")
         self.operation_counter += 1
         self.update_live_graph(level)
+
         for i, block in enumerate(set_blocks):
             if i != hit_index:
                 block.config(bg="#f0f0f0")
+
         self.found = True
-        self.after(1000, self.reset_cache_colors)
 
     def handle_miss(self, level, index, set_blocks):
         for block in set_blocks:
@@ -260,38 +296,70 @@ class CacheSimulatorGUI(tk.Tk):
     def animate_ram_access(self):
         self.update_live_graph("RAM")
         self.ram_frame.config(bg="#ffd700")
+        indices = []
+        display_texts = []
     
-        # Update all cache levels in reverse order (from L3 up to L1)
         for level in reversed(self.levels):
             cache = getattr(self.cache, level)
             index = mylib.getIndex(self.search_address, cache.block_size, cache.num_sets)
             tag = mylib.getTag(self.search_address, cache.block_size, cache.num_sets)
-        
-            # Find and replace LRU block in the cache set
-            lru_index = min(range(cache.associativity), 
-                        key=lambda i: cache.sets[index].blocks[i].lastUsedTime)
-            cache.sets[index].blocks[lru_index].tag = tag
-            cache.sets[index].blocks[lru_index].valid = True
-            cache.sets[index].blocks[lru_index].lastUsedTime = self.time_counter
-        
-            # Compute the full address based on the formula:
-            computed_address = (tag * cache.num_sets + index) * cache.block_size
-        
-            # Prepare the display text with address, tag, and index
-            display_text = f"Addr: {computed_address}\nTag: {tag}\nIdx: {index}"
-        
-            # Update GUI for this level using Label's config
-            set_blocks = self.get_set_blocks(level, index, cache.associativity)
-            set_blocks[lru_index].config(text=display_text, bg="#d4edda")
-    
-        # Reset colors after animations
-        search_time = self.time_counter - self.search_start_time
-        self.search_counts.append(len(self.search_counts) + 1)  # Incremental number of searches
 
+            # Modified replacement policy selection
+            policy = self.replacement_policy.get()
+            if policy == "LRU":
+                replace_index = min(range(cache.associativity),
+                    key=lambda i: cache.sets[index].blocks[i].lastUsedTime)
+            elif policy == "LFU":
+                replace_index = min(range(cache.associativity),
+                    key=lambda i: cache.sets[index].blocks[i].access_count)
+            elif policy == "FIFO":
+                replace_index = 0
+
+            # Update the selected block
+            cache.sets[index].blocks[replace_index].tag = tag
+            cache.sets[index].blocks[replace_index].valid = True
+            cache.sets[index].blocks[replace_index].lastUsedTime = self.time_counter
+
+            computed_address = (tag * cache.num_sets + index) * cache.block_size
+            text = f"Addr: {computed_address}\nTag: {tag}\nIdx: {index}"
+
+            indices.append(replace_index)
+            display_texts.append(text)
+
+        # Track time taken
+        search_time = self.time_counter - self.search_start_time
+        self.search_counts.append(len(self.search_counts) + 1)
         self.search_times.append(search_time)
         self.update_graph()
 
-        self.after(1500, self.continue_ram_animation)
+        self.levels = ['L3', 'L2', 'L1']
+
+        # Animate block moving L3 → L2 → L1
+        self.animate_multi_level_transfer(self.levels.copy(), index, tag, indices, display_texts)
+
+    def animate_multi_level_transfer(self, levels, index, tag, lru_indices, display_texts):
+        if not levels:
+            self.after(800, self.continue_ram_animation)
+            return
+
+        level = levels.pop(0)
+        lru_index = lru_indices.pop(0)
+        display_text = display_texts.pop(0)
+        
+        to_block = self.get_set_blocks(level, index, getattr(self.cache, level).associativity)[lru_index]
+        
+        # Visual cue for incoming transfer
+        
+        to_block.config(bg="#cce5ff")  # Light blue as incoming
+
+        def complete_transfer():
+            to_block.config(text=display_text)
+            to_block.config(bg="#d4edda")  # Green on arrival
+            self.animate_multi_level_transfer(levels, index, tag, lru_indices, display_texts)
+
+        self.levels = ['L1', 'L2', 'L3']
+
+        self.after(800, complete_transfer)
 
 
     def continue_ram_animation(self):

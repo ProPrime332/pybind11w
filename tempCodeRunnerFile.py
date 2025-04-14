@@ -1,1 +1,1 @@
-read
+to_block.config(text=display_text)
